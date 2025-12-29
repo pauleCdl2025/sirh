@@ -38,14 +38,26 @@ const UnifiedLogin = () => {
     setError('');
     setIsLoading(true);
 
+    // Récupérer les valeurs directement depuis le formulaire pour éviter les problèmes de synchronisation
+    const form = e.target;
+    const formIdentifier = form.identifier?.value || identifier;
+    const formPassword = form.password?.value || password;
+
+    console.log('📝 Données du formulaire:', { 
+      formIdentifier, 
+      formPassword: formPassword ? '***' : 'vide',
+      stateIdentifier: identifier,
+      statePassword: password ? '***' : 'vide'
+    });
+
     // Validation de base
-    if (!identifier.trim()) {
+    if (!formIdentifier.trim()) {
       setError('Veuillez saisir votre identifiant (email ou matricule)');
       setIsLoading(false);
       return;
     }
 
-    if (!password.trim()) {
+    if (!formPassword || !formPassword.trim()) {
       setError('Veuillez saisir votre mot de passe');
       setIsLoading(false);
       return;
@@ -53,13 +65,16 @@ const UnifiedLogin = () => {
 
     try {
       // Vérifier d'abord si c'est un identifiant administrateur
-      const normalizedIdentifier = identifier.trim().toLowerCase();
+      const normalizedIdentifier = formIdentifier.trim().toLowerCase();
+      console.log('🔍 Vérification type utilisateur pour:', normalizedIdentifier);
       const isAdminEmail = adminAuthService.isAdminEmail(normalizedIdentifier);
+      console.log('🔍 Résultat vérification admin:', isAdminEmail);
       
       if (isAdminEmail) {
         // Authentification admin avec le service dédié
         console.log('🔐 Détection admin, utilisation de adminAuthService');
-        const adminResult = await adminAuthService.login(normalizedIdentifier, password);
+        console.log('🔑 Password dans handleSubmit:', formPassword ? 'présent' : 'absent', 'Longueur:', formPassword?.length);
+        const adminResult = await adminAuthService.login(normalizedIdentifier, formPassword);
         
         if (adminResult && adminResult.success && adminResult.admin) {
           console.log('✅ Connexion admin réussie via UnifiedLogin');
@@ -84,7 +99,12 @@ const UnifiedLogin = () => {
           
           // Rediriger vers le portail admin
           console.log('🔄 Redirection vers /admin-portal...');
-          navigate('/admin-portal', { replace: true });
+          console.log('💾 Vérification sessionStorage:', sessionStorage.getItem('adminUser') ? 'présent' : 'absent');
+          
+          // Le composant AdminPortalRoute vérifie maintenant périodiquement le sessionStorage
+          // Donc navigate() devrait fonctionner, mais utilisons window.location.href pour forcer le rechargement
+          // et garantir que le composant se monte avec les bonnes valeurs du sessionStorage
+          window.location.href = '/admin-portal';
           return;
         } else {
           setError(adminResult?.error || 'Identifiants administrateur incorrects');
@@ -94,7 +114,7 @@ const UnifiedLogin = () => {
       }
       
       // Utiliser le service d'authentification unifié pour RH et Employés
-      const result = await unifiedAuthService.login(identifier.trim(), password);
+      const result = await unifiedAuthService.login(formIdentifier.trim(), formPassword);
 
       if (result.success) {
         if (result.userType === 'rh') {
@@ -236,6 +256,7 @@ const UnifiedLogin = () => {
                 <input 
                   type="text" 
                   id="identifier"
+                  name="identifier"
                   className="unified-form-control" 
                   placeholder={inputConfig.placeholder}
                   value={identifier}
@@ -263,11 +284,16 @@ const UnifiedLogin = () => {
                 <i className="fas fa-lock unified-input-icon"></i>
                 <input 
                   type={showPassword ? "text" : "password"} 
-                  id="password" 
+                  id="password"
+                  name="password"
                   className="unified-form-control" 
                   placeholder="Votre mot de passe" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={password || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    console.log('🔑 Password onChange:', val ? 'présent' : 'vide', 'Longueur:', val?.length);
+                    setPassword(val);
+                  }}
                   required 
                   disabled={isLoading}
                   autoComplete="current-password"

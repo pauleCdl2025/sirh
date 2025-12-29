@@ -132,7 +132,7 @@
 
 .unified-form-control {
   width: 100%;
-  padding: 14px 16px 14px 48px;
+  padding: 14px 48px 14px 48px;
   border: 2px solid #e2e8f0;
   border-radius: 12px;
   font-size: 1rem;
@@ -185,13 +185,24 @@
   color: #718096;
   cursor: pointer;
   font-size: 1.1rem;
-  z-index: 2;
+  z-index: 3;
   transition: color 0.3s ease;
-  padding: 4px;
+  padding: 8px;
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .unified-password-toggle:hover {
   color: #3a8eba;
+  background: rgba(58, 142, 186, 0.1);
+  border-radius: 50%;
+}
+
+.unified-form-group:has(.unified-user-type-badge) .unified-password-toggle {
+  right: 80px;
 }
 
 .unified-form-options {

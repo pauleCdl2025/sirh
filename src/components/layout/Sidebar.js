@@ -96,15 +96,6 @@ const Sidebar = ({ collapsed }) => {
       ]
     },
     {
-      title: 'Administration',
-      icon: 'fas fa-user-shield',
-      path: '#',
-      subMenu: [
-        { title: 'Dashboard Admin', path: '/admin-dashboard' },
-        { title: 'Graphiques', path: '/charts' }
-      ]
-    },
-    {
       title: 'Graphiques',
       icon: 'fas fa-chart-bar',
       path: '#',

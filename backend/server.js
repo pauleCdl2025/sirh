@@ -37,7 +37,7 @@ const pool = new Pool({
 
 // Middleware optimisé pour éviter les timeouts
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001'],
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5001'],
   credentials: true
 }));
 
@@ -156,6 +156,11 @@ app.get('/api/ping', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Routes d'authentification RH (users)
+const authRoutes = require('./auth/authRoutes');
+app.use('/api/auth', authRoutes(pool));
+console.log('✅ Route /api/auth enregistrée');
 
 // Routes pour l'onboarding et l'offboarding (AVANT les routes d'employés)
 const onboardingRoutes = require('./routes/onboardingRoutes');

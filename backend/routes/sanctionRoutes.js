@@ -194,19 +194,73 @@ router.put('/:id/cancel', async (req, res) => {
 });
     // Supprimer une sanction
     router.delete('/:id', async (req, res) => {
+        const client = await pool.connect();
         try {
+            await client.query('BEGIN');
+            
             const { id } = req.params;
-            const query = 'DELETE FROM sanctions_table WHERE id = $1 RETURNING *';
-            const result = await pool.query(query, [id]);
-
-            if (result.rows.length === 0) {
+            
+            // Récupérer les infos de la sanction avant suppression
+            const sanctionInfoQuery = 'SELECT * FROM sanctions_table WHERE id = $1';
+            const sanctionInfoResult = await client.query(sanctionInfoQuery, [id]);
+            
+            if (sanctionInfoResult.rows.length === 0) {
+                await client.query('ROLLBACK');
                 return res.status(404).json({ error: 'Sanction not found' });
             }
-
+            
+            const sanction = sanctionInfoResult.rows[0];
+            const entityName = `Sanction - ${sanction.nom_employe || 'Employé inconnu'} (${sanction.type_sanction || 'N/A'})`;
+            
+            // Récupérer l'utilisateur qui effectue la suppression
+            const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+            const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+            const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+            const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            
+            // Sauvegarder dans audit_logs avant suppression
+            await client.query(`
+                INSERT INTO audit_logs (
+                    action_type, entity_type, entity_id, entity_name,
+                    user_type, user_id, user_email, description, ip_address, user_agent, status,
+                    changes
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [
+                'delete',
+                'sanction',
+                id.toString(),
+                entityName,
+                userType,
+                userId,
+                userEmail,
+                `Sanction supprimée: ${entityName}`,
+                ipAddress,
+                userAgent,
+                'success',
+                JSON.stringify({
+                    nom_employe: sanction.nom_employe,
+                    type_sanction: sanction.type_sanction,
+                    date_sanction: sanction.date_sanction,
+                    motif: sanction.motif,
+                    statut: sanction.statut
+                })
+            ]);
+            
+            // Supprimer la sanction
+            const query = 'DELETE FROM sanctions_table WHERE id = $1 RETURNING *';
+            const result = await client.query(query, [id]);
+            
+            await client.query('COMMIT');
+            
+            console.log(`✅ Sanction supprimée (ID: ${id}) et tracée dans audit_logs`);
             res.json({ message: 'Sanction deleted successfully', sanction: result.rows[0] });
         } catch (err) {
+            await client.query('ROLLBACK');
             console.error('Error deleting sanction:', err);
             res.status(500).json({ error: 'Failed to delete sanction', details: err.message });
+        } finally {
+            client.release();
         }
     });
 

@@ -89,3 +89,4 @@ addColumnsToDepartHistory()
     process.exit(1);
   });
 
+

@@ -96,3 +96,4 @@ Si le problème persiste, fournissez :
 3. **Le résultat de** `sessionStorage.getItem('adminUser')` dans la console
 4. **Le résultat de** `window.location.pathname` après avoir cliqué sur "Se connecter"
 
+

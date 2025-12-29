@@ -149,19 +149,73 @@ module.exports = (pool) => {
 
     // Supprimer une note
     router.delete('/:id', async (req, res) => {
+        const client = await pool.connect();
         try {
+            await client.query('BEGIN');
+            
             const { id } = req.params;
-            const query = 'DELETE FROM notes WHERE id = $1 RETURNING *';
-            const result = await pool.query(query, [id]);
-
-            if (result.rows.length === 0) {
+            
+            // Récupérer les infos de la note avant suppression
+            const noteInfoQuery = 'SELECT * FROM notes WHERE id = $1';
+            const noteInfoResult = await client.query(noteInfoQuery, [id]);
+            
+            if (noteInfoResult.rows.length === 0) {
+                await client.query('ROLLBACK');
                 return res.status(404).json({ error: 'Note not found' });
             }
-
+            
+            const note = noteInfoResult.rows[0];
+            const entityName = `Note: ${note.title || note.full_note_number || 'Note sans titre'}`;
+            
+            // Récupérer l'utilisateur qui effectue la suppression
+            const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+            const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+            const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+            const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            
+            // Sauvegarder dans audit_logs avant suppression
+            await client.query(`
+                INSERT INTO audit_logs (
+                    action_type, entity_type, entity_id, entity_name,
+                    user_type, user_id, user_email, description, ip_address, user_agent, status,
+                    changes
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [
+                'delete',
+                'note',
+                id.toString(),
+                entityName,
+                userType,
+                userId,
+                userEmail,
+                `Note supprimée: ${entityName}`,
+                ipAddress,
+                userAgent,
+                'success',
+                JSON.stringify({
+                    full_note_number: note.full_note_number,
+                    title: note.title,
+                    category: note.category,
+                    is_public: note.is_public,
+                    created_by: note.created_by
+                })
+            ]);
+            
+            // Supprimer la note
+            const query = 'DELETE FROM notes WHERE id = $1 RETURNING *';
+            const result = await client.query(query, [id]);
+            
+            await client.query('COMMIT');
+            
+            console.log(`✅ Note supprimée (ID: ${id}) et tracée dans audit_logs`);
             res.json({ message: 'Note deleted successfully', note: result.rows[0] });
         } catch (err) {
+            await client.query('ROLLBACK');
             console.error('Error deleting note:', err);
             res.status(500).json({ error: 'Failed to delete note', details: err.message });
+        } finally {
+            client.release();
         }
     });
 

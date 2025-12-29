@@ -259,15 +259,79 @@ module.exports = (pool) => {
 
   // Delete leave request
   router.delete('/:id', async (req, res) => {
+    const client = await pool.connect();
     try {
+      await client.query('BEGIN');
+      
       const { id } = req.params;
       
-      await pool.query('DELETE FROM leave_requests WHERE id = $1', [id]);
+      // Récupérer les infos de la demande avant suppression
+      const leaveInfoQuery = `
+        SELECT lr.*, e.nom_prenom, e.matricule
+        FROM leave_requests lr
+        LEFT JOIN employees e ON lr.employee_id = e.id
+        WHERE lr.id = $1
+      `;
+      const leaveInfoResult = await client.query(leaveInfoQuery, [id]);
       
+      if (leaveInfoResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Leave request not found' });
+      }
+      
+      const leaveRequest = leaveInfoResult.rows[0];
+      const entityName = `Demande de congé - ${leaveRequest.nom_prenom || 'Employé inconnu'} (${leaveRequest.matricule || 'N/A'})`;
+      
+      // Récupérer l'utilisateur qui effectue la suppression
+      const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+      const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+      const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+      const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+      const userAgent = req.headers['user-agent'] || 'unknown';
+      
+      // Sauvegarder dans audit_logs avant suppression
+      await client.query(`
+        INSERT INTO audit_logs (
+          action_type, entity_type, entity_id, entity_name,
+          user_type, user_id, user_email, description, ip_address, user_agent, status,
+          changes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `, [
+        'delete',
+        'leave_request',
+        id.toString(),
+        entityName,
+        userType,
+        userId,
+        userEmail,
+        `Demande de congé supprimée: ${entityName}`,
+        ipAddress,
+        userAgent,
+        'success',
+        JSON.stringify({
+          employee_id: leaveRequest.employee_id,
+          employee_name: leaveRequest.nom_prenom,
+          matricule: leaveRequest.matricule,
+          start_date: leaveRequest.start_date,
+          end_date: leaveRequest.end_date,
+          status: leaveRequest.status,
+          leave_type: leaveRequest.leave_type
+        })
+      ]);
+      
+      // Supprimer la demande
+      await client.query('DELETE FROM leave_requests WHERE id = $1', [id]);
+      
+      await client.query('COMMIT');
+      
+      console.log(`✅ Demande de congé supprimée (ID: ${id}) et tracée dans audit_logs`);
       res.json({ message: 'Leave request deleted successfully' });
     } catch (err) {
+      await client.query('ROLLBACK');
       console.error('Error executing query', err.stack);
       res.status(500).json({ message: 'Server error', error: err.message });
+    } finally {
+      client.release();
     }
   });
 

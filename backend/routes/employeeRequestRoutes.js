@@ -261,16 +261,75 @@ module.exports = (pool) => {
     // Route pour supprimer toutes les demandes des employés (côté RH)
     // IMPORTANT: Cette route doit être définie AVANT /:id pour éviter les conflits
     router.delete('/all', async (req, res) => {
+        const client = await pool.connect();
         try {
+            await client.query('BEGIN');
+            
+            // Récupérer toutes les demandes avant suppression
+            const getAllRequestsQuery = `
+                SELECT er.*, e.nom_prenom, e.matricule
+                FROM employee_requests er
+                LEFT JOIN employees e ON er.employee_id = e.id
+            `;
+            const allRequestsResult = await client.query(getAllRequestsQuery);
+            const allRequests = allRequestsResult.rows;
+            
+            // Récupérer l'utilisateur qui effectue la suppression
+            const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+            const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+            const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+            const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            
+            // Enregistrer dans audit_logs pour chaque demande supprimée
+            for (const request of allRequests) {
+                const entityName = `Demande employé - ${request.nom_prenom || 'Employé inconnu'} (${request.matricule || 'N/A'}) - Type: ${request.request_type || 'N/A'}`;
+                
+                try {
+                    await client.query(`
+                        INSERT INTO audit_logs (
+                            action_type, entity_type, entity_id, entity_name,
+                            user_type, user_id, user_email, description, ip_address, user_agent, status,
+                            changes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    `, [
+                        'delete',
+                        'employee_request',
+                        request.id.toString(),
+                        entityName,
+                        userType,
+                        userId,
+                        userEmail,
+                        `Demande employé supprimée (suppression en masse): ${entityName}`,
+                        ipAddress,
+                        userAgent,
+                        'success',
+                        JSON.stringify({
+                            employee_id: request.employee_id,
+                            employee_name: request.nom_prenom,
+                            matricule: request.matricule,
+                            request_type: request.request_type,
+                            status: request.status,
+                            request_date: request.request_date
+                        })
+                    ]);
+                } catch (auditErr) {
+                    console.error(`Erreur audit pour demande ${request.id}:`, auditErr);
+                    // Continue même si l'audit échoue pour une demande
+                }
+            }
+            
             // Supprimer toutes les demandes
             const deleteQuery = 'DELETE FROM employee_requests';
-            const result = await pool.query(deleteQuery);
+            const result = await client.query(deleteQuery);
             
             // Réinitialiser la séquence pour que les prochains IDs commencent à 1
             const resetSequenceQuery = 'ALTER SEQUENCE employee_requests_id_seq RESTART WITH 1';
-            await pool.query(resetSequenceQuery);
+            await client.query(resetSequenceQuery);
             
-            console.log(`✅ Toutes les demandes des employés ont été supprimées (${result.rowCount} lignes)`);
+            await client.query('COMMIT');
+            
+            console.log(`✅ Toutes les demandes des employés ont été supprimées (${result.rowCount} lignes) et tracées dans audit_logs`);
             
             res.json({
                 success: true,
@@ -278,31 +337,93 @@ module.exports = (pool) => {
                 deletedCount: result.rowCount
             });
         } catch (err) {
+            await client.query('ROLLBACK');
             console.error('❌ Erreur lors de la suppression des demandes:', err);
             res.status(500).json({
                 success: false,
                 error: 'Erreur lors de la suppression des demandes',
                 details: err.message
             });
+        } finally {
+            client.release();
         }
     });
 
     // Supprimer une demande
     router.delete('/:id', async (req, res) => {
+        const client = await pool.connect();
         try {
+            await client.query('BEGIN');
+            
             const { id } = req.params;
 
-            const query = 'DELETE FROM employee_requests WHERE id = $1 RETURNING *';
-            const result = await pool.query(query, [id]);
+            // Récupérer les infos de la demande avant suppression
+            const requestInfoQuery = `
+                SELECT er.*, e.nom_prenom, e.matricule, e.email
+                FROM employee_requests er
+                LEFT JOIN employees e ON er.employee_id = e.id
+                WHERE er.id = $1
+            `;
+            const requestInfoResult = await client.query(requestInfoQuery, [id]);
 
-            if (result.rows.length === 0) {
+            if (requestInfoResult.rows.length === 0) {
+                await client.query('ROLLBACK');
                 return res.status(404).json({ error: 'Employee request not found' });
             }
+            
+            const request = requestInfoResult.rows[0];
+            const entityName = `Demande employé - ${request.nom_prenom || 'Employé inconnu'} (${request.matricule || 'N/A'}) - Type: ${request.request_type || 'N/A'}`;
+            
+            // Récupérer l'utilisateur qui effectue la suppression
+            const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+            const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+            const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+            const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            
+            // Sauvegarder dans audit_logs avant suppression
+            await client.query(`
+                INSERT INTO audit_logs (
+                    action_type, entity_type, entity_id, entity_name,
+                    user_type, user_id, user_email, description, ip_address, user_agent, status,
+                    changes
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [
+                'delete',
+                'employee_request',
+                id.toString(),
+                entityName,
+                userType,
+                userId,
+                userEmail,
+                `Demande employé supprimée: ${entityName}`,
+                ipAddress,
+                userAgent,
+                'success',
+                JSON.stringify({
+                    employee_id: request.employee_id,
+                    employee_name: request.nom_prenom,
+                    matricule: request.matricule,
+                    request_type: request.request_type,
+                    status: request.status,
+                    request_date: request.request_date
+                })
+            ]);
 
+            // Supprimer la demande
+            const query = 'DELETE FROM employee_requests WHERE id = $1 RETURNING *';
+            const result = await client.query(query, [id]);
+            
+            await client.query('COMMIT');
+            
+            console.log(`✅ Demande employé supprimée (ID: ${id}) et tracée dans audit_logs`);
             res.json({ message: 'Employee request deleted successfully', request: result.rows[0] });
         } catch (err) {
+            await client.query('ROLLBACK');
             console.error('Error deleting employee request:', err);
             res.status(500).json({ error: 'Failed to delete employee request', details: err.message });
+        } finally {
+            client.release();
         }
     });
 

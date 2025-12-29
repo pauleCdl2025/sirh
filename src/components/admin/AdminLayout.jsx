@@ -12,7 +12,10 @@ import {
   FaUserTie,
   FaExclamationTriangle,
   FaCog,
-  FaHome
+  FaHome,
+  FaHistory,
+  FaShieldAlt,
+  FaTrash
 } from 'react-icons/fa';
 
 const AdminLayout = ({ children }) => {
@@ -51,6 +54,21 @@ const AdminLayout = ({ children }) => {
       path: '/admin-portal/users'
     },
     {
+      title: 'Historique Connexions',
+      icon: <FaHistory />,
+      path: '/admin-portal/login-history'
+    },
+    {
+      title: 'Journal d\'Audit',
+      icon: <FaShieldAlt />,
+      path: '/admin-portal/audit-trail'
+    },
+    {
+      title: 'Suppressions',
+      icon: <FaTrash />,
+      path: '/admin-portal/deletions'
+    },
+    {
       title: 'Gestion Employés',
       icon: <FaUserTie />,
       path: '/admin-portal/employees'
@@ -85,8 +103,12 @@ const AdminLayout = ({ children }) => {
       <aside className={`admin-sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="admin-sidebar-header">
           <div className="admin-sidebar-logo">
-            <FaUserShield />
-            <span className={sidebarOpen ? '' : 'hidden'}>Admin Portal</span>
+            <img 
+              src="https://res.cloudinary.com/dd64mwkl2/image/upload/v1723636014/Centre_Diagnostic_logo_coucleur_ie6ywu.png" 
+              alt="Centre Diagnostic Logo" 
+              style={{ width: '32px', height: '32px', marginRight: sidebarOpen ? '10px' : '0' }}
+            />
+            {sidebarOpen && <span>Admin Portal</span>}
           </div>
           <button
             className="admin-sidebar-toggle"

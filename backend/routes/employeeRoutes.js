@@ -889,15 +889,54 @@ router.delete('/:id', async (req, res) => {
 
         const departureResult = await client.query(insertDepartureQuery, departureValues);
         
-        // 5. Supprimer l'employé des tables liées d'abord (si nécessaire)
+        // 5. Récupérer l'utilisateur qui effectue la suppression
+        const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+        const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+        const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+        const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+        const userAgent = req.headers['user-agent'] || 'unknown';
+        
+        // 6. Sauvegarder dans audit_logs avant suppression
+        await client.query(`
+            INSERT INTO audit_logs (
+                action_type, entity_type, entity_id, entity_name,
+                user_type, user_id, user_email, description, ip_address, user_agent, status,
+                changes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [
+            'delete',
+            'employee',
+            id.toString(),
+            `${employee.nom_prenom} (${employee.matricule || 'N/A'})`,
+            userType,
+            userId,
+            userEmail,
+            `Employé supprimé: ${employee.nom_prenom} (${employee.matricule || 'N/A'}) - Motif: ${motif_depart}`,
+            ipAddress,
+            userAgent,
+            'success',
+            JSON.stringify({
+                nom_prenom: employee.nom_prenom,
+                matricule: employee.matricule,
+                email: employee.email,
+                poste_actuel: employee.poste_actuel,
+                functional_area: employee.functional_area,
+                type_contrat: employee.type_contrat,
+                date_entree: employee.date_entree,
+                motif_depart: motif_depart,
+                date_depart_effective: date_depart_effective || new Date().toISOString().split('T')[0]
+            })
+        ]);
+        
+        // 7. Supprimer l'employé des tables liées d'abord (si nécessaire)
         // Supprimer les documents liés
         await client.query('DELETE FROM employee_documents WHERE employee_id = $1', [id]);
         
-        // 6. Supprimer l'employé
+        // 8. Supprimer l'employé
         const deleteEmployeeQuery = 'DELETE FROM employees WHERE id = $1 RETURNING *';
         const deleteResult = await client.query(deleteEmployeeQuery, [id]);
 
-        // 7. Valider la transaction
+        // 9. Valider la transaction
         await client.query('COMMIT');
         
         console.log(`✅ Employee ${employee.nom_prenom} (ID: ${id}) deleted successfully`);

@@ -34,8 +34,7 @@ import TaskManagement from './components/hr/TaskManagement';
 import MedicalAccess from './components/medical/MedicalAccess';
 import ChartsPage from './components/dashboard/ChartsPage';
 import DashboardAdmin from './components/dashboard/DashboardAdmin';
-import AdminLayout from './components/admin/AdminLayout';
-import AdminUsersManagement from './components/admin/AdminUsersManagement';
+import AdminPortalRoute from './components/admin/AdminPortalRoute';
 
 // Composant principal avec authentification
 function AppContent() {
@@ -62,7 +61,34 @@ function AppContent() {
     if (storedMedicalUser) {
       setIsMedicalAuthenticated(true);
     }
-  }, []);
+
+    // Écouter les changements dans sessionStorage pour mettre à jour l'état
+    const handleStorageChange = (e) => {
+      if (e.key === 'adminUser') {
+        setIsAdminAuthenticated(!!e.newValue);
+      } else if (e.key === 'employeeUser') {
+        setIsEmployeeAuthenticated(!!e.newValue);
+      } else if (e.key === 'medecin_user') {
+        setIsMedicalAuthenticated(!!e.newValue);
+      }
+    };
+
+    // Écouter les événements storage (pour les autres onglets)
+    window.addEventListener('storage', handleStorageChange);
+    
+    // Vérifier périodiquement pour détecter les changements dans le même onglet
+    const interval = setInterval(() => {
+      const currentAdminUser = sessionStorage.getItem('adminUser');
+      if (!!currentAdminUser !== isAdminAuthenticated) {
+        setIsAdminAuthenticated(!!currentAdminUser);
+      }
+    }, 500);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, [isAdminAuthenticated]);
 
   const handleAdminLogout = () => {
     logout();
@@ -89,27 +115,7 @@ function AppContent() {
       {/* Admin Portal Routes */}
       <Route 
         path="/admin-portal/*" 
-        element={
-          (() => {
-            const adminUser = sessionStorage.getItem('adminUser');
-            if (adminUser) {
-              return (
-                <AdminLayout>
-                  <Routes>
-                    <Route path="" element={<DashboardAdmin />} />
-                    <Route path="users" element={<AdminUsersManagement />} />
-                    <Route path="employees" element={<div className="admin-page"><h2>Gestion des Employés</h2><p>Page en cours de développement</p></div>} />
-                    <Route path="stats" element={<DashboardAdmin />} />
-                    <Route path="alerts" element={<DashboardAdmin />} />
-                    <Route path="settings" element={<div className="admin-settings-page"><h2>Paramètres Administrateur</h2><p>Page en cours de développement</p></div>} />
-                  </Routes>
-                </AdminLayout>
-              );
-            } else {
-              return <Navigate to="/login" replace />;
-            }
-          })()
-        } 
+        element={<AdminPortalRoute />}
       />
 
       {/* Home Route - Redirects based on user type */}

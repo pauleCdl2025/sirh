@@ -216,3 +216,4 @@ Les employés peuvent changer leur mot de passe via :
 
 **Dernière mise à jour :** 2025-01-XX
 
+

@@ -379,15 +379,21 @@ module.exports = (pool) => {
       
       if (tableName === 'recrutement_history') {
         // Pour recrutement_history, pas de CV à supprimer
+        // Récupérer les infos avant suppression pour audit_logs
+        getQuery = 'SELECT * FROM recrutement_history WHERE id = $1';
+        const getResultBefore = await pool.query(getQuery, [realId]);
+        const recordBefore = getResultBefore.rows[0];
+        
         deleteQuery = 'DELETE FROM recrutement_history WHERE id = $1 RETURNING *';
         result = await pool.query(deleteQuery, [realId]);
       } else {
         // Pour historique_recrutement, supprimer le CV si nécessaire
-        getQuery = 'SELECT cv_path FROM historique_recrutement WHERE id = $1';
+        getQuery = 'SELECT * FROM historique_recrutement WHERE id = $1';
         const getResult = await pool.query(getQuery, [realId]);
+        const recordBefore = getResult.rows[0];
         
-        if (getResult.rows.length > 0 && getResult.rows[0].cv_path) {
-          const cvPath = path.join(__dirname, '..', getResult.rows[0].cv_path);
+        if (recordBefore && recordBefore.cv_path) {
+          const cvPath = path.join(__dirname, '..', recordBefore.cv_path);
           // Supprimer le fichier CV s'il existe
           if (fs.existsSync(cvPath)) {
             fs.unlinkSync(cvPath);
@@ -402,8 +408,56 @@ module.exports = (pool) => {
         return res.status(404).json({ error: 'Recruitment record not found' });
       }
 
-      // Formatter la réponse pour le frontend
+      // Enregistrer dans audit_logs
       const row = result.rows[0];
+      const entityName = tableName === 'recrutement_history' 
+        ? (row.nom_prenom || 'Candidat supprimé')
+        : combineFullName(row.nom || '', row.prenom || '');
+      
+      const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+      const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+      const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+      const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+      const userAgent = req.headers['user-agent'] || 'unknown';
+      
+      try {
+        await pool.query(`
+          INSERT INTO audit_logs (
+            action_type, entity_type, entity_id, entity_name,
+            user_type, user_id, user_email, description, ip_address, user_agent, status,
+            changes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [
+          'delete',
+          'recruitment',
+          realId.toString(),
+          entityName,
+          userType,
+          userId,
+          userEmail,
+          `Enregistrement de recrutement supprimé: ${entityName}`,
+          ipAddress,
+          userAgent,
+          'success',
+          JSON.stringify(tableName === 'recrutement_history' ? {
+            nom_prenom: row.nom_prenom,
+            email: row.email,
+            telephone: row.telephone,
+            poste: row.poste
+          } : {
+            nom: row.nom,
+            prenom: row.prenom,
+            email: row.email,
+            telephone: row.telephone
+          })
+        ]);
+        console.log(`✅ Enregistrement de recrutement supprimé (ID: ${realId}) et tracé dans audit_logs`);
+      } catch (auditErr) {
+        console.error('Erreur lors de l\'enregistrement dans audit_logs:', auditErr);
+        // Ne pas faire échouer la suppression si l'audit échoue
+      }
+
+      // Formatter la réponse pour le frontend
       let formattedResult;
       
       if (tableName === 'recrutement_history') {

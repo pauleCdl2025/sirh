@@ -10,6 +10,7 @@ const Login = () => {
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   
   const navigate = useNavigate();
   const { login } = useAuth();
@@ -116,7 +117,7 @@ const Login = () => {
               <div className="input-group">
                 <span className="input-group-text"><i className="fas fa-lock"></i></span>
                 <input 
-                  type="password" 
+                  type={showPassword ? "text" : "password"} 
                   className="form-control" 
                   id="password"
                   name="password"
@@ -125,6 +126,14 @@ const Login = () => {
                   onChange={handleInputChange}
                   required
                 />
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary password-toggle-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  title={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                >
+                  <i className={`fas ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                </button>
               </div>
             </div>
             

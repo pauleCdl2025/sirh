@@ -58,3 +58,4 @@ deleteAllMessages()
     process.exit(1);
   });
 
+

@@ -85,3 +85,4 @@ Vu que vous utilisez `centre-diagnostic.com`, je recommande :
 2. **Si vous utilisez Google Workspace** : Contacter l'administrateur pour activer les mots de passe d'application
 3. **Pour la production** : Utiliser SendGrid ou Mailgun
 
+

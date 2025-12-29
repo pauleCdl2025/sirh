@@ -284,10 +284,48 @@ module.exports = (pool) => {
                 }
             }
             
+            // Récupérer l'utilisateur qui effectue la suppression
+            const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+            const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+            const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+            const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            
+            const entityName = `Absence - ${absence.nom_employe || 'Employé inconnu'} (${absence.type_absence || 'N/A'})`;
+            
+            // Sauvegarder dans audit_logs avant suppression
+            await pool.query(`
+                INSERT INTO audit_logs (
+                    action_type, entity_type, entity_id, entity_name,
+                    user_type, user_id, user_email, description, ip_address, user_agent, status,
+                    changes
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [
+                'delete',
+                'absence',
+                id.toString(),
+                entityName,
+                userType,
+                userId,
+                userEmail,
+                `Absence supprimée: ${entityName}`,
+                ipAddress,
+                userAgent,
+                'success',
+                JSON.stringify({
+                    nom_employe: absence.nom_employe,
+                    type_absence: absence.type_absence,
+                    date_debut: absence.date_debut,
+                    date_fin: absence.date_fin,
+                    service: absence.service
+                })
+            ]);
+            
             // Supprimer l'enregistrement de la base de données
             const deleteQuery = 'DELETE FROM absence WHERE id = $1 RETURNING *';
             const deleteResult = await pool.query(deleteQuery, [id]);
 
+            console.log(`✅ Absence supprimée (ID: ${id}) et tracée dans audit_logs`);
             res.json({ message: 'Absence deleted successfully', absence: deleteResult.rows[0] });
         } catch (err) {
             console.error('Error deleting absence:', err);

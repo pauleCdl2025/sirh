@@ -212,19 +212,79 @@ module.exports = (pool) => {
 
     // Supprimer un contrat
     router.delete('/:id', async (req, res) => {
+        const client = await pool.connect();
         try {
+            await client.query('BEGIN');
+            
             const { id } = req.params;
-            const query = 'DELETE FROM contrats WHERE id = $1 RETURNING *';
-            const result = await pool.query(query, [id]);
-
-            if (result.rows.length === 0) {
+            
+            // Récupérer les infos du contrat et de l'employé avant suppression
+            const contratInfoQuery = `
+                SELECT c.*, e.nom_prenom, e.matricule
+                FROM contrats c
+                LEFT JOIN employees e ON c.employee_id = e.id
+                WHERE c.id = $1
+            `;
+            const contratInfoResult = await client.query(contratInfoQuery, [id]);
+            
+            if (contratInfoResult.rows.length === 0) {
+                await client.query('ROLLBACK');
                 return res.status(404).json({ error: 'Contrat not found' });
             }
-
+            
+            const contrat = contratInfoResult.rows[0];
+            const entityName = `Contrat ${contrat.type_contrat || 'N/A'} - ${contrat.nom_prenom || 'Employé supprimé'} (${contrat.matricule || 'N/A'})`;
+            
+            // Récupérer l'utilisateur qui effectue la suppression
+            const userEmail = req.headers['x-user-email'] || req.user?.email || 'system';
+            const userId = req.headers['x-user-id'] || req.user?.id?.toString() || 'system';
+            const userType = req.headers['x-user-type'] || req.user?.role || 'rh';
+            const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            
+            // Sauvegarder dans audit_logs avant suppression
+            await client.query(`
+                INSERT INTO audit_logs (
+                    action_type, entity_type, entity_id, entity_name,
+                    user_type, user_id, user_email, description, ip_address, user_agent, status,
+                    changes
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [
+                'delete',
+                'contract',
+                id.toString(),
+                entityName,
+                userType,
+                userId,
+                userEmail,
+                `Contrat supprimé: ${entityName}`,
+                ipAddress,
+                userAgent,
+                'success',
+                JSON.stringify({
+                    type_contrat: contrat.type_contrat,
+                    date_debut: contrat.date_debut,
+                    date_fin: contrat.date_fin,
+                    employee_id: contrat.employee_id,
+                    employee_name: contrat.nom_prenom,
+                    matricule: contrat.matricule
+                })
+            ]);
+            
+            // Supprimer le contrat
+            const query = 'DELETE FROM contrats WHERE id = $1 RETURNING *';
+            const result = await client.query(query, [id]);
+            
+            await client.query('COMMIT');
+            
+            console.log(`✅ Contrat supprimé (ID: ${id}) et tracé dans audit_logs`);
             res.json({ message: 'Contrat deleted successfully', contrat: result.rows[0] });
         } catch (err) {
+            await client.query('ROLLBACK');
             console.error('Error deleting contrat:', err);
             res.status(500).json({ error: 'Failed to delete contrat', details: err.message });
+        } finally {
+            client.release();
         }
     });
 
