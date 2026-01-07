@@ -47,70 +47,48 @@ module.exports = (pool) => {
   ensureMessagesTable();
   
   // WebSocket pour les notifications en temps réel
-  let wss;
+  const wss = new WebSocket.Server({ port: 5002 });
   const clients = new Map();
-  
-  try {
-    wss = new WebSocket.Server({ port: 5002 });
-    console.log('🔌 WebSocket Server démarré sur le port 5002');
+
+  console.log('🔌 WebSocket Server démarré sur le port 5002');
+
+  wss.on('connection', (ws, req) => {
+    console.log('🔌 Nouvelle connexion WebSocket');
     
-    wss.on('error', (error) => {
-      if (error.code === 'EADDRINUSE') {
-        console.warn('⚠️ Port 5002 déjà utilisé. WebSocket désactivé. Le serveur continuera de fonctionner sans WebSocket.');
-        wss = null; // Désactiver le WebSocket
-      } else {
-        console.error('❌ Erreur WebSocket:', error.message);
+    ws.on('message', (data) => {
+      try {
+        const message = JSON.parse(data);
+        
+        if (message.type === 'register') {
+          const clientKey = `${message.userType}_${message.userId}`;
+          clients.set(clientKey, ws);
+          console.log(`📝 Client enregistré: ${clientKey}`);
+          
+          // Envoyer confirmation
+          ws.send(JSON.stringify({
+            type: 'registered',
+            clientKey: clientKey
+          }));
+        }
+      } catch (error) {
+        console.error('Erreur lors du traitement du message WebSocket:', error);
       }
     });
 
-    wss.on('connection', (ws, req) => {
-      console.log('🔌 Nouvelle connexion WebSocket');
-      
-      ws.on('message', (data) => {
-        try {
-          const message = JSON.parse(data);
-          
-          if (message.type === 'register') {
-            const clientKey = `${message.userType}_${message.userId}`;
-            clients.set(clientKey, ws);
-            console.log(`📝 Client enregistré: ${clientKey}`);
-            
-            // Envoyer confirmation
-            ws.send(JSON.stringify({
-              type: 'registered',
-              clientKey: clientKey
-            }));
-          }
-        } catch (error) {
-          console.error('Erreur lors du traitement du message WebSocket:', error);
+    ws.on('close', () => {
+      // Supprimer le client de la liste
+      for (const [key, client] of clients.entries()) {
+        if (client === ws) {
+          clients.delete(key);
+          console.log(`📝 Client déconnecté: ${key}`);
+          break;
         }
-      });
-
-      ws.on('close', () => {
-        // Supprimer le client de la liste
-        for (const [key, client] of clients.entries()) {
-          if (client === ws) {
-            clients.delete(key);
-            console.log(`📝 Client déconnecté: ${key}`);
-            break;
-          }
-        }
-      });
+      }
     });
-  } catch (error) {
-    if (error.code === 'EADDRINUSE') {
-      console.warn('⚠️ Port 5002 déjà utilisé. WebSocket désactivé. Le serveur continuera de fonctionner sans WebSocket.');
-      wss = null; // Désactiver le WebSocket
-    } else {
-      console.error('❌ Erreur lors de l\'initialisation du WebSocket:', error.message);
-      wss = null;
-    }
-  }
+  });
 
   // Fonction pour envoyer une notification WebSocket
   const sendWebSocketNotification = (userType, userId, notification) => {
-    if (!wss) return false; // Si WebSocket n'est pas disponible, ne rien faire
-    
     const clientKey = `${userType}_${userId}`;
     const client = clients.get(clientKey);
     
@@ -432,200 +410,72 @@ module.exports = (pool) => {
     }
   });
 
-  // Route spéciale pour les statistiques RH (compteurs par employé) - DOIT ÊTRE AVANT /stats/:userType/:userId
-  router.get('/stats/rh/:userId', (req, res, next) => {
-    console.log('🔵 Route /stats/rh/:userId - HANDLER APPELÉ');
-    console.log('🔵 req.method:', req.method);
-    console.log('🔵 req.url:', req.url);
-    console.log('🔵 req.path:', req.path);
-    console.log('🔵 req.params:', req.params);
-    // Fonction helper pour retourner une réponse 200 même en cas d'erreur
-    const sendSafeResponse = (data, error = null) => {
-      if (!res.headersSent) {
-        return res.status(200).json({
-          success: true,
-          ...data,
-          ...(error && { error: error.message || 'Erreur inconnue' })
-        });
-      }
-    };
-
-    // Wrapper pour capturer toutes les erreurs, même synchrones
-    Promise.resolve().then(async () => {
-      try {
-        console.log('🔵 Route /stats/rh/:userId appelée');
-        console.log('🔵 Paramètres reçus:', req.params);
-        console.log('🔵 URL complète:', req.url);
-        
-        // Décoder le userId au cas où il serait URL-encodé
-        let userId;
-        try {
-          userId = decodeURIComponent(req.params.userId || '');
-          console.log('🔵 userId décodé:', userId);
-        } catch (decodeError) {
-          console.error('❌ Erreur lors du décodage du userId:', decodeError);
-          userId = req.params.userId || '';
-          console.log('🔵 userId utilisé tel quel:', userId);
-        }
-        
-        if (!userId) {
-          console.log('⚠️ userId manquant dans les paramètres');
-          return sendSafeResponse({ unreadCounts: {}, totalUnread: 0 });
-        }
-
-        console.log(`📊 Récupération des statistiques RH pour ${userId}`);
-
-        // Si userId est un email, on doit trouver l'ID correspondant dans la table users
-        // Sinon, on utilise directement userId comme ID
-        let actualUserId = userId;
-        
-        // Vérifier si userId est un email (contient @)
-        if (userId.includes('@')) {
-          try {
-            // Vérifier d'abord si la table users existe
-            const tableCheck = await pool.query(`
-              SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'users'
-              );
-            `);
-            
-            if (tableCheck.rows[0]?.exists) {
-              const userQuery = await pool.query(
-                'SELECT id FROM users WHERE email = $1',
-                [userId]
-              );
-              
-              if (userQuery.rows.length > 0) {
-                actualUserId = userQuery.rows[0].id;
-                console.log(`📧 Email ${userId} correspond à l'ID utilisateur ${actualUserId}`);
-              } else {
-                // Si l'utilisateur n'existe pas dans la table users, utiliser l'email directement
-                console.log(`⚠️ Aucun utilisateur trouvé pour l'email ${userId}, utilisation de l'email comme ID`);
-                actualUserId = userId;
-              }
-            } else {
-              console.log(`⚠️ Table users n'existe pas, utilisation de l'email comme ID`);
-              actualUserId = userId;
-            }
-          } catch (userError) {
-            console.error('❌ Erreur lors de la recherche de l\'utilisateur:', userError);
-            console.error('❌ Détails:', userError.message);
-            // En cas d'erreur, essayer de continuer avec l'email comme ID
-            actualUserId = userId;
-          }
-        }
-
-        // Vérifier que la table existe d'abord (ne pas laisser cette fonction lancer une erreur non capturée)
-        try {
-          await ensureMessagesTable();
-        } catch (tableError) {
-          console.error('❌ Erreur lors de la vérification de la table messages:', tableError);
-          // Si la table ne peut pas être créée, retourner une réponse vide
-          return sendSafeResponse({ unreadCounts: {}, totalUnread: 0 }, tableError);
-        }
-
-        // Compteurs de messages non lus par employé pour RH
-        // Utiliser receiver_name ou receiver_id selon ce qui est disponible
-        let unreadCountsQuery;
-        let queryParams;
-        
-        // Si actualUserId est un nombre (ID), utiliser receiver_id
-        // Sinon, utiliser receiver_name (email)
-        if (typeof actualUserId === 'number' || /^\d+$/.test(actualUserId.toString())) {
-          unreadCountsQuery = `
-            SELECT 
-              sender_id as employee_id,
-              sender_name as employee_name,
-              COUNT(*) as unread_count
-            FROM messages 
-            WHERE receiver_id = $1
-              AND receiver_type = 'rh'
-              AND is_read = FALSE
-            GROUP BY sender_id, sender_name
-            ORDER BY unread_count DESC
-          `;
-          queryParams = [actualUserId.toString()];
-        } else {
-          // Si c'est un email, utiliser receiver_name
-          unreadCountsQuery = `
-            SELECT 
-              sender_id as employee_id,
-              sender_name as employee_name,
-              COUNT(*) as unread_count
-            FROM messages 
-            WHERE receiver_name = $1
-              AND receiver_type = 'rh'
-              AND is_read = FALSE
-            GROUP BY sender_id, sender_name
-            ORDER BY unread_count DESC
-          `;
-          queryParams = [actualUserId];
-        }
-
-        console.log(`🔍 Exécution de la requête avec params:`, queryParams);
-        console.log(`🔍 Requête SQL:`, unreadCountsQuery);
-
-        let result;
-        try {
-          result = await pool.query(unreadCountsQuery, queryParams);
-        } catch (queryError) {
-          console.error('❌ Erreur SQL lors de l\'exécution de la requête:', queryError);
-          console.error('❌ Message SQL:', queryError.message);
-          console.error('❌ Code SQL:', queryError.code);
-          // Si la table n'existe pas ou autre erreur SQL, retourner une réponse vide
-          return sendSafeResponse({ unreadCounts: {}, totalUnread: 0 }, queryError);
-        }
-
-        // Convertir en objet pour faciliter l'utilisation côté frontend
-        const unreadCounts = {};
-        if (result && result.rows) {
-          result.rows.forEach(row => {
-            unreadCounts[row.employee_id] = {
-              name: row.employee_name,
-              count: parseInt(row.unread_count) || 0
-            };
-          });
-        }
-
-        const totalUnread = Object.values(unreadCounts).reduce((sum, emp) => sum + (emp.count || 0), 0);
-        console.log(`✅ Statistiques RH récupérées: ${Object.keys(unreadCounts).length} employés avec messages non lus, total: ${totalUnread}`);
-
-        return sendSafeResponse({ unreadCounts: unreadCounts, totalUnread: totalUnread });
-
-      } catch (error) {
-        console.error('❌ Erreur lors de la récupération des statistiques RH:', error);
-        console.error('❌ Message d\'erreur:', error.message);
-        console.error('❌ Stack trace:', error.stack);
-        
-        // Toujours retourner 200 même en cas d'erreur
-        return sendSafeResponse({ unreadCounts: {}, totalUnread: 0 }, error);
-      }
-    }).catch((error) => {
-      // Capturer les erreurs non gérées dans la promesse
-      console.error('❌ Erreur non gérée dans la promesse:', error);
-      console.error('❌ Message:', error.message);
-      console.error('❌ Stack:', error.stack);
-      
-      // S'assurer qu'aucune réponse n'a déjà été envoyée
-      if (!res.headersSent) {
-        return res.status(200).json({
-          success: true,
-          unreadCounts: {},
-          totalUnread: 0,
-          error: error.message || 'Erreur non gérée'
-        });
-      }
-    });
-  });
-
   // Route pour récupérer les statistiques de messagerie
   router.get('/stats/:userType/:userId', async (req, res) => {
     try {
       const { userType, userId } = req.params;
 
       console.log(`📊 Récupération des statistiques pour ${userType}:${userId}`);
+
+      // Si userId est un email, on doit trouver l'ID correspondant dans la table users
+      let actualUserId = userId;
+      
+      // Vérifier si userId est un email (contient @)
+      if (userId.includes('@')) {
+        try {
+          const userQuery = await pool.query(
+            'SELECT id FROM users WHERE email = $1',
+            [userId]
+          );
+          
+          if (userQuery.rows.length > 0) {
+            actualUserId = userQuery.rows[0].id.toString();
+            console.log(`📧 Email ${userId} correspond à l'ID utilisateur ${actualUserId}`);
+          } else {
+            // Si l'utilisateur n'existe pas dans la table users, retourner des statistiques vides
+            console.log(`⚠️ Aucun utilisateur trouvé pour l'email ${userId}`);
+            return res.status(200).json({
+              success: true,
+              stats: {
+                total_messages: 0,
+                sent_messages: 0,
+                received_messages: 0,
+                unread_messages: 0
+              },
+              recentActivity: []
+            });
+          }
+        } catch (userError) {
+          console.error('❌ Erreur lors de la recherche de l\'utilisateur:', userError);
+          // En cas d'erreur, retourner des statistiques vides
+          return res.status(200).json({
+            success: true,
+            stats: {
+              total_messages: 0,
+              sent_messages: 0,
+              received_messages: 0,
+              unread_messages: 0
+            },
+            recentActivity: []
+          });
+        }
+      }
+
+      // Convertir actualUserId en entier pour la requête SQL
+      const userIdInt = parseInt(actualUserId);
+      if (isNaN(userIdInt)) {
+        console.log(`⚠️ Impossible de convertir ${actualUserId} en entier`);
+        return res.status(200).json({
+          success: true,
+          stats: {
+            total_messages: 0,
+            sent_messages: 0,
+            received_messages: 0,
+            unread_messages: 0
+          },
+          recentActivity: []
+        });
+      }
 
       // Statistiques générales
       const statsQuery = `
@@ -639,7 +489,7 @@ module.exports = (pool) => {
            OR receiver_id = $1 AND receiver_type = $2
       `;
 
-      const result = await pool.query(statsQuery, [userId, userType]);
+      const result = await pool.query(statsQuery, [userIdInt, userType]);
 
       // Messages récents (derniers 7 jours)
       const recentQuery = `
@@ -652,7 +502,7 @@ module.exports = (pool) => {
         ORDER BY date DESC
       `;
 
-      const recentResult = await pool.query(recentQuery, [userId, userType]);
+      const recentResult = await pool.query(recentQuery, [userIdInt, userType]);
 
       console.log(`✅ Statistiques récupérées: ${result.rows[0].total_messages} messages totaux`);
 
@@ -701,6 +551,144 @@ module.exports = (pool) => {
       res.status(500).json({
         success: false,
         message: 'Erreur lors de la suppression du message',
+        error: error.message
+      });
+    }
+  });
+
+  // Route spéciale pour les statistiques RH (compteurs par employé)
+  router.get('/stats/rh/:userId', async (req, res) => {
+    try {
+      const { userId } = req.params;
+
+      console.log(`📊 Récupération des statistiques RH pour ${userId}`);
+
+      // Si userId est un email, on doit trouver l'ID correspondant dans la table users
+      // Sinon, on utilise directement userId comme ID
+      let actualUserId = userId;
+      
+      // Vérifier si userId est un email (contient @)
+      if (userId.includes('@')) {
+        try {
+          const userQuery = await pool.query(
+            'SELECT id FROM users WHERE email = $1',
+            [userId]
+          );
+          
+          if (userQuery.rows.length > 0) {
+            actualUserId = userQuery.rows[0].id;
+            console.log(`📧 Email ${userId} correspond à l'ID utilisateur ${actualUserId}`);
+          } else {
+            // Si l'utilisateur n'existe pas dans la table users, retourner 0 messages
+            console.log(`⚠️ Aucun utilisateur trouvé pour l'email ${userId}`);
+            return res.status(200).json({
+              success: true,
+              unreadCounts: {},
+              totalUnread: 0
+            });
+          }
+        } catch (userError) {
+          console.error('❌ Erreur lors de la recherche de l\'utilisateur:', userError);
+          // En cas d'erreur, essayer de continuer avec l'email comme ID
+          actualUserId = userId;
+        }
+      }
+
+      // Vérifier que la table existe d'abord (ne pas laisser cette fonction lancer une erreur non capturée)
+      try {
+        await ensureMessagesTable();
+      } catch (tableError) {
+        console.error('❌ Erreur lors de la vérification de la table messages:', tableError);
+        // Continuer quand même, la requête échouera mais sera capturée
+      }
+
+      // Compteurs de messages non lus par employé pour RH
+      // Utiliser receiver_name ou receiver_id selon ce qui est disponible
+      let unreadCountsQuery;
+      let queryParams;
+      
+      // Si actualUserId est un nombre (ID), utiliser receiver_id
+      // Sinon, utiliser receiver_name (email)
+      if (typeof actualUserId === 'number' || /^\d+$/.test(actualUserId.toString())) {
+        unreadCountsQuery = `
+          SELECT 
+            sender_id as employee_id,
+            sender_name as employee_name,
+            COUNT(*) as unread_count
+          FROM messages 
+          WHERE receiver_id = $1
+            AND receiver_type = 'rh'
+            AND is_read = FALSE
+          GROUP BY sender_id, sender_name
+          ORDER BY unread_count DESC
+        `;
+        queryParams = [actualUserId.toString()];
+      } else {
+        // Si c'est un email, utiliser receiver_name
+        unreadCountsQuery = `
+          SELECT 
+            sender_id as employee_id,
+            sender_name as employee_name,
+            COUNT(*) as unread_count
+          FROM messages 
+          WHERE receiver_name = $1
+            AND receiver_type = 'rh'
+            AND is_read = FALSE
+          GROUP BY sender_id, sender_name
+          ORDER BY unread_count DESC
+        `;
+        queryParams = [actualUserId];
+      }
+
+      console.log(`🔍 Exécution de la requête avec params:`, queryParams);
+      console.log(`🔍 Requête SQL:`, unreadCountsQuery);
+
+      let result;
+      try {
+        result = await pool.query(unreadCountsQuery, queryParams);
+      } catch (queryError) {
+        console.error('❌ Erreur SQL lors de l\'exécution de la requête:', queryError);
+        console.error('❌ Message SQL:', queryError.message);
+        // Si la table n'existe pas ou autre erreur SQL, retourner une réponse vide
+        return res.json({
+          success: true,
+          unreadCounts: {},
+          totalUnread: 0,
+          error: queryError.message
+        });
+      }
+
+      // Convertir en objet pour faciliter l'utilisation côté frontend
+      const unreadCounts = {};
+      if (result && result.rows) {
+        result.rows.forEach(row => {
+          unreadCounts[row.employee_id] = {
+            name: row.employee_name,
+            count: parseInt(row.unread_count)
+          };
+        });
+      }
+
+      const totalUnread = Object.values(unreadCounts).reduce((sum, emp) => sum + emp.count, 0);
+      console.log(`✅ Statistiques RH récupérées: ${Object.keys(unreadCounts).length} employés avec messages non lus, total: ${totalUnread}`);
+
+      res.json({
+        success: true,
+        unreadCounts: unreadCounts,
+        totalUnread: totalUnread
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des statistiques RH:', error);
+      console.error('❌ Message d\'erreur:', error.message);
+      console.error('❌ Stack trace:', error.stack);
+      
+      // Retourner une réponse 200 avec des valeurs vides plutôt qu'une erreur 500 pour éviter de bloquer l'interface
+      // Ne pas utiliser res.status(500) pour cette route
+      return res.status(200).json({
+        success: true,
+        unreadCounts: {},
+        totalUnread: 0,
         error: error.message
       });
     }

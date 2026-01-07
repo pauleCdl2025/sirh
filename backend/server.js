@@ -1,6 +1,3 @@
-// Charger les variables d'environnement
-require('dotenv').config();
-
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -17,18 +14,12 @@ const port = process.env.PORT || 5000;
 const server = http.createServer(app);
 
 // Configure PostgreSQL connection with correct credentials
-// En production, toutes les variables d'environnement doivent être définies
-if (process.env.NODE_ENV === 'production' && !process.env.DB_PASSWORD) {
-  console.error('❌ ERREUR CRITIQUE: DB_PASSWORD n\'est pas défini en production!');
-  process.exit(1);
-}
-
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'rh_portal',
-  password: process.env.DB_PASSWORD || (process.env.NODE_ENV === 'production' ? '' : 'Cdl@2025'),
-  port: parseInt(process.env.DB_PORT) || 5432,
+  user: 'postgres',
+  host: 'localhost',
+  database: 'rh_portal',
+  password: 'Cdl@2025',
+  port: 5432,
   // Configuration pour l'encodage UTF-8
   options: '-c client_encoding=UTF8',
   // Paramètres supplémentaires pour l'encodage
@@ -43,28 +34,15 @@ const pool = new Pool({
 
 // Middleware optimisé pour éviter les timeouts
 app.use(cors({
-  origin: [
-    'http://localhost:3000', 
-    'http://localhost:3001', 
-    'http://localhost:5001',
-    'http://172.16.3.52:3000',
-    process.env.CORS_ORIGIN || 'http://172.16.3.52:3000'
-  ],
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5001'],
   credentials: true
 }));
 
 // Augmenter les limites pour éviter les timeouts
-const requestTimeout = parseInt(process.env.REQUEST_TIMEOUT) || 300000; // 5 minutes par défaut
 app.use(express.json({ 
   limit: '50mb',
-  timeout: requestTimeout
+  timeout: 300000 // 5 minutes
 }));
-
-// Middleware de logging pour toutes les requêtes
-app.use((req, res, next) => {
-  console.log(`📥 ${req.method} ${req.url}`);
-  next();
-});
 
 app.use(express.urlencoded({ 
   limit: '50mb', 
@@ -170,11 +148,6 @@ app.get('/api/ping', (req, res) => {
   });
 });
 
-// Routes d'authentification RH (users)
-const authRoutes = require('./auth/authRoutes');
-app.use('/api/auth', authRoutes(pool));
-console.log('✅ Route /api/auth enregistrée');
-
 // Routes pour l'onboarding et l'offboarding (AVANT les routes d'employés)
 const onboardingRoutes = require('./routes/onboardingRoutes');
 const offboardingRoutes = require('./routes/offboardingRoutes');
@@ -203,7 +176,6 @@ const employeeAuthRoutes = require('./routes/employeeAuthRoutes');
 const realMessagingRoutes = require('./routes/realMessagingRoutes');
 const photoRoutes = require('./routes/photoRoutes');
 app.use('/api/messages', realMessagingRoutes(pool));
-console.log('✅ Route /api/messages enregistrée');
 app.use('/api/photos', photoRoutes(pool));
 
 // Ajoutez cette ligne avec les autres définitions de routes
@@ -212,17 +184,8 @@ app.use('/api/employees/auth', employeeAuthRoutes(pool));
 // Importez la route de réinitialisation de mot de passe
 const passwordResetRoutes = require('./routes/passwordResetRoutes');
 
-// Routes admin pour le dashboard administrateur
-const adminRoutes = require('./routes/adminRoutes');
-app.use('/api/admin', adminRoutes(pool));
-console.log('✅ Route /api/admin enregistrée');
-
 // Ajoutez cette ligne avec les autres définitions de routes
-app.use('/api/password-reset', (req, res, next) => {
-  console.log(`📧 Password Reset Route: ${req.method} ${req.path}`);
-  console.log(`📧 Body:`, req.body);
-  next();
-}, passwordResetRoutes(pool));
+app.use('/api/password-reset', passwordResetRoutes);
 
 // Routes pour les congés
 const congeRoutes = require('./routes/congeRoutes');
@@ -310,8 +273,6 @@ app.use((err, req, res, next) => {
 server.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`📡 WebSocket server ready for real-time notifications`);
-  console.log(`📡 Routes disponibles:`);
-  console.log(`   - GET /api/messages/stats/rh/:userId`);
 });
 
 // Initialize WebSocket server
